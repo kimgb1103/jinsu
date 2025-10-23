@@ -455,6 +455,54 @@ def _transfer_account_issue(account_result_ids: List[int]) -> bool:
   data = _http_post_json(sess, url, payload, timeout=90)
   return bool((data or {}).get("success"))
 
+def _issue_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool:
+  """기타출고 top-list로 받은 row를 현재시간 new_dt로 갱신(수정 저장)"""
+  try:
+    sess: requests.Session = st.session_state["sess"]
+    base_url = st.session_state["base_url"].rstrip("/")
+    url = base_url + "/inv/stock-etc-issue/top-save"
+    upd = dict(row)
+    upd["editStatus"] = "U"
+    upd["transactionDate"] = new_dt
+    upd["row-active"] = True
+    payload = {
+      "recordsIMain": "[]",
+      "recordsUMain": json.dumps([upd], ensure_ascii=False),
+      "recordsDMain": "[]",
+      "menuTreeId": "13633",
+      "languageCode": "KO",
+      "companyCode": _context_ids()[2],
+      "companyId": _context_ids()[0],
+    }
+    data = _http_post_json(sess, url, payload, timeout=90)
+    return bool((data or {}).get("success"))
+  except Exception:
+    return False
+
+def _receipt_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool:
+  """기타입고 top-list로 받은 row를 현재시간 new_dt로 갱신(수정 저장)"""
+  try:
+    sess: requests.Session = st.session_state["sess"]
+    base_url = st.session_state["base_url"].rstrip("/")
+    url = base_url + "/inv/stock-account-receipt/top-save"
+    upd = dict(row)
+    upd["editStatus"] = "U"
+    upd["transactionDate"] = new_dt
+    upd["row-active"] = True
+    payload = {
+      "recordsIMain": "[]",
+      "recordsUMain": json.dumps([upd], ensure_ascii=False),
+      "recordsDMain": "[]",
+      "menuTreeId": "13650",
+      "languageCode": "KO",
+      "companyCode": _context_ids()[2],
+      "companyId": _context_ids()[0],
+    }
+    data = _http_post_json(sess, url, payload, timeout=90)
+    return bool((data or {}).get("success"))
+  except Exception:
+    return False
+
 # ----- 기타입고(저장 + 전송) -----
 def _plant_item_list(q_code:str="", q_name:str="")->pd.DataFrame:
   try:
@@ -1246,7 +1294,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               confirm = _top_list_confirm_issue(account_num, str(item_code or ""), now.strftime("%Y-%m-%d"))
             lst = (((confirm or {}).get("data") or {}).get("list")) or []
             if lst:
-              row = lst[0]
+              row = dict(lst[0])
+              # ▼ 현재 시간으로 거래일자 강제 갱신(수정 저장)
+              _ = _issue_top_update_transaction_date(row, now.strftime("%Y-%m-%d %H:%M:%S"))
               all_results.append({
                 "accountNum": row.get("accountNum"),
                 "itemCode": row.get("itemCode"),
@@ -1550,7 +1600,10 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             tl = tl[(tl["accountNum"]==acct_num)]
             if tl.empty:
               st.error("기타입고 top-list 조회 실패"); st.stop()
-            account_result_id = int(tl.iloc[0]["accountResultId"])
+            top_row = tl.iloc[0].to_dict()
+            account_result_id = int(top_row["accountResultId"])
+            # ▼ 현재 시간으로 거래일자 강제 갱신(수정 저장)
+            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
 
             lot_rows = []
             for _, row in g.iterrows():
@@ -1558,7 +1611,6 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
                 "editStatus":"I","companyId":company_id,"plantId":plant_id,"accountResultId":account_result_id,
                 "itemId":item_id,"primaryUom":primary_uom,"primaryQuantity":float(row["_after_onhandQuantity"]),
                 "lotQuantity":0,"secondaryUom":secondary_uom,"secondaryQuantity":float(row["_after_onhandQuantity"]),
-                "effectiveStartDate":None,"effectiveEndDate":None,"effectivePeriodOfDay":0,
                 "effectivePeriodOfDayFlag":"N","parentLotCount":0,"parentPrimaryQuantity":float(total_qty),
                 "parentEffectiveStartDate":None,"parentEffectiveEndDate":None,"parentInterfaceFlag":"N",
                 "lotCode":str(row["_after_lotCode"]),"lotType":"양품","lotId":0,"interfaceFlag":"N",
