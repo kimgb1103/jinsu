@@ -1395,8 +1395,17 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error("top-save 실패"); st.stop()
             created_ids.append(int(account_result_id))
 
+            # ② 저장내용 조회(top-list) → 거래일자만 U-저장
+            with st.spinner(f"② 저장내용 조회(top-list) 중... [{item_code}/{wh_name}]"):
+              confirm = _top_list_confirm_issue(account_num, str(item_code or ""), tx_ymd)
+            lst = (((confirm or {}).get("data") or {}).get("list")) or []
+            if lst:
+              row = dict(lst[0])
+              _ = _issue_top_update_transaction_date(row, tx_dt)
+
+            # ③ LOT 상세조회/저장 준비 → ④ LOT 저장(lot-save)
             lot_records: List[Dict[str,Any]] = []
-            with st.spinner(f"② LOT 상세조회/저장 준비 중... [{item_code}/{wh_name}]"):
+            with st.spinner(f"③ LOT 상세조회/저장 준비 중... [{item_code}/{wh_name}]"):
               for _, r in gdf.iterrows():
                 it_id = _to_int_safe(r.get("itemId"), 0)
                 lot_code = str(r.get("lotCode") or "")
@@ -1407,18 +1416,13 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
                 rec = dict(rec); rec["accountResultId"] = int(account_result_id); rec["interfaceFlag"] = "N"
                 lot_records.append(rec)
 
-            with st.spinner(f"③ LOT 저장(lot-save) 중... [{item_code}/{wh_name}]"):
+            with st.spinner(f"④ LOT 저장(lot-save) 중... [{item_code}/{wh_name}]"):
               ok = _lot_save_issue(lot_records)
             if not ok:
               st.error("lot-save 실패"); st.stop()
 
-            with st.spinner(f"④ 저장내용 검증(top-list) 중... [{item_code}/{wh_name}]"):
-              confirm = _top_list_confirm_issue(account_num, str(item_code or ""), tx_ymd)
-            lst = (((confirm or {}).get("data") or {}).get("list")) or []
+            # 결과 축적(기존 로직 유지)
             if lst:
-              row = dict(lst[0])
-              # ▼ 버튼 시각(보정)으로 거래일자 강제 갱신(수정 저장)
-              _ = _issue_top_update_transaction_date(row, tx_dt)
               all_results.append({
                 "accountNum": row.get("accountNum"),
                 "itemCode": row.get("itemCode"),
@@ -1725,7 +1729,8 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error("기타입고 top-list 조회 실패"); st.stop()
             top_row = tl.iloc[0].to_dict()
             account_result_id = int(top_row["accountResultId"])
-            # ▼ (순서 변경) 거래일자 갱신은 bottom-save 성공 후에 수행
+            # ▼ 거래일자만 버튼 시각으로 즉시 U-저장 (Save → Update → Save → Transfer)
+            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
 
             lot_rows = []
             for _, row in g.iterrows():
@@ -1746,9 +1751,6 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             if not ok2:
               st.error(f"기타입고 bottom-save 실패: {err_msg or '서버 사유 미반환'}")
               st.stop()
-              
-            # ▼ 거래일자 현재시간(현지)으로 갱신(최소 변경 1줄)
-            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
               ok_tx = _receipt_transmit(account_result_id, base_ymd)  # ← 방금 쓴 거래일자 날짜(YYYY-MM-DD)로 고정
