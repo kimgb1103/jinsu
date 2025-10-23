@@ -1679,6 +1679,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
           base_now = dt.datetime.now()
           base_ymd = base_now.strftime("%Y-%m-%d")
           trans_dt = base_now.strftime("%Y-%m-%d %H:%M:%S")
+          tx_dt   = (base_now + dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")  # 서버표시 보정(+9h)
 
           after_wh = st.session_state["wh_selected"] or {}
           wh_id = _to_int_safe(after_wh.get("warehouseId"), 0)
@@ -1757,8 +1758,8 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error(f"기타입고 bottom-save 실패: {err_msg or '서버 사유 미반환'}")
               st.stop()
               
-             # ▼ 거래일자 현재시간으로 갱신(최소 변경 1줄)
-            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
+             # ▼ 거래일자 현재시간(+9h 보정)으로 갱신(최소 변경 1줄)
+            _ = _receipt_top_update_transaction_date(top_row, tx_dt)
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
               ok_tx = _receipt_transmit(account_result_id)
