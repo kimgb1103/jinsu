@@ -960,6 +960,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
     if st.session_state["alias_list"].empty:
       st.session_state["alias_list"] = _fetch_account_alias_list()
     st.session_state["show_preview"] = True
+    st.session_state["rebuild_preview"] = True  # ← 카트 기준으로 미리보기 재생성 플래그
+    st.session_state["show_lot_change"] = False  # LOT 편집 패널 초기화
+    st.session_state["lot_edit_inputs"] = {}     # LOT 편집 입력 초기화
 
   # ---------- 변환 미리보기 ----------
   if st.session_state["show_preview"]:
@@ -1015,37 +1018,64 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
     with col_copies:
       st.session_state["label_copies"] = st.number_input("라벨 매수(LOT당)", min_value=1, max_value=50, value=st.session_state["label_copies"], step=1)
 
-    src = st.session_state["cart_df"].copy()
+    # ── 변환 미리보기 소스 준비 ──
+    # 'rebuild_preview'가 True면 카트 내용으로 미리보기를 다시 생성(상위 작업)
+    force_rebuild = bool(st.session_state.get("rebuild_preview"))
+
+    if force_rebuild:
+      src = st.session_state["cart_df"].copy()
+      # 카트에 우연히 섞여 있을 수 있는 과거 after/alias 컬럼은 제거 후 깨끗하게 재생성
+      drop_cols = [c for c in src.columns if c.startswith("_after_") or c.startswith("_alias_")]
+      if drop_cols:
+        src = src.drop(columns=drop_cols, errors="ignore")
+    else:
+      # 기존 미리보기가 있으면 우선 사용(사용자 LOT 수동변경 유지)
+      if not st.session_state["preview_df_full"].empty:
+        src = st.session_state["preview_df_full"].copy()
+      else:
+        src = st.session_state["cart_df"].copy()
+
     if src.empty:
       st.info("카트가 비어 있습니다. 왼쪽에서 행을 선택하고 [담기]를 눌러주세요.")
     else:
-      src["_after_itemName"] = "(완)" + src["itemName"].astype(str)
-      unique_after_names = sorted(src["_after_itemName"].dropna().astype(str).unique())
-      name_to_code: Dict[str, str] = {}
-      for nm in unique_after_names:
-        code = _fetch_item_code_by_name(nm)
-        name_to_code[nm] = code
-      src["_after_itemCode"] = src["_after_itemName"].map(name_to_code).fillna("")
-      def _rebuild_lot(old_lot: Any, new_code: str) -> str:
-        s = str(old_lot or "")
-        nc = (new_code or "")[:7]
-        if len(s) >= 7 and len(nc) == 7:
-          return nc + s[7:]
-        return s
-      src["_after_lotCode"] = [
-        _rebuild_lot(ol, ac) for ol, ac in zip(src["lotCode"].astype(str), src["_after_itemCode"].astype(str))
-      ]
-      after_wh_name = str(st.session_state["wh_selected"].get("warehouseName")) if st.session_state["wh_selected"] else ""
-      src["_after_warehouseName"] = after_wh_name
-      src["_after_primaryUom"] = src["primaryUom"].astype(str)
-      _orig_qty = pd.to_numeric(src["onhandQuantity"], errors="coerce")
-      src["onhandQuantity"] = _orig_qty.abs() * (-1)
-      src["_after_onhandQuantity"] = _orig_qty.abs()
-      if st.session_state["alias_selected"] is not None:
-        for k, v in st.session_state["alias_selected"].items():
-          src[f"_alias_{k}"] = v
-      st.session_state["preview_df_full"] = src.copy()
+      # after 컬럼이 없을 때만 최초 생성 (이미 있으면 유지)
+      if "_after_itemCode" not in src.columns:
+        src["_after_itemName"] = "(완)" + src["itemName"].astype(str)
 
+        unique_after_names = sorted(src["_after_itemName"].dropna().astype(str).unique())
+        name_to_code: Dict[str, str] = {}
+        for nm in unique_after_names:
+          code = _fetch_item_code_by_name(nm)
+          name_to_code[nm] = code
+        src["_after_itemCode"] = src["_after_itemName"].map(name_to_code).fillna("")
+
+        def _rebuild_lot(old_lot: Any, new_code: str) -> str:
+          s = str(old_lot or "")
+          nc = (new_code or "")[:7]
+          if len(s) >= 7 and len(nc) == 7:
+            return nc + s[7:]
+          return s
+
+        src["_after_lotCode"] = [
+          _rebuild_lot(ol, ac) for ol, ac in zip(src["lotCode"].astype(str), src["_after_itemCode"].astype(str))
+        ]
+
+        after_wh_name = str(st.session_state["wh_selected"].get("warehouseName")) if st.session_state["wh_selected"] else ""
+        src["_after_warehouseName"] = after_wh_name
+        src["_after_primaryUom"] = src["primaryUom"].astype(str)
+
+        _orig_qty = pd.to_numeric(src["onhandQuantity"], errors="coerce")
+        src["onhandQuantity"] = _orig_qty.abs() * (-1)
+        src["_after_onhandQuantity"] = _orig_qty.abs()
+
+        if st.session_state["alias_selected"] is not None:
+          for k, v in st.session_state["alias_selected"].items():
+            src[f"_alias_{k}"] = v
+
+      # ▼ 항상 최신 상태를 세션에 반영(LOT 변경 유지)
+      st.session_state["preview_df_full"] = src.copy()
+      st.session_state["rebuild_preview"] = False  # ← 재빌드 플래그 해제
+      
       show_cols = [
         "warehouseName","itemCode","itemName","lotCode","primaryUom","onhandQuantity",
         "_after_warehouseName","_after_itemCode","_after_itemName","_after_lotCode","_after_primaryUom","_after_onhandQuantity"
@@ -1090,10 +1120,85 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
         key="grid_preview",
       )
 
+      # ========= LOT 변경 버튼 =========
+      btn_lot_change = st.button("LOT 변경", key="btn_lot_change")  # ← 너비/높이는 네가 조정
+
+      # 버튼 클릭 시 편집용 기본값 구성 (_after_itemCode 그룹당 1개)
+      if btn_lot_change:
+        st.session_state["show_lot_change"] = True
+        df_src = st.session_state["preview_df_full"].copy()
+        inputs = {}
+        def _pick_ymd(lot_str: str) -> str:
+          m = re.search(r"-[A-Za-z0-9]{2}-(\d{6})\d{3}$", str(lot_str or ""))
+          return m.group(1) if m else ""
+        for code, g in df_src.groupby("_after_itemCode", dropna=False):
+          code_s = str(code or "")
+          if not code_s:
+            continue
+          name_s = str(g["_after_itemName"].iloc[0]) if "_after_itemName" in g.columns and not g.empty else ""
+          # 그룹 내 가장 최근(문자 비교 max) YYMMDD 기본값 (컬럼 직접 접근)
+          yy = [ _pick_ymd(x) for x in g["_after_lotCode"].astype(str).tolist() if x ]
+          default_ymd = max(yy) if yy else dt.datetime.now().strftime("%y%m%d")
+          inputs[code_s] = {"name": name_s, "ymd": default_ymd}
+        st.session_state["lot_edit_inputs"] = inputs
+
+      # 편집 패널 표시
+      if st.session_state.get("show_lot_change"):
+        st.markdown("##### LOT 변경")
+        with st.form("lot_change_form", clear_on_submit=False):
+          # 헤더
+          h1, h2, h3 = st.columns([1.5, 3, 1])
+          with h1: st.markdown("**_after_itemCode**")
+          with h2: st.markdown("**_after_itemName**")   # 오타 수정
+          with h3: st.markdown("**YYMMDD**")
+
+          # 코드 · 이름 · YYMMDD 입력 (그룹당 1줄)
+          for code_s, info in (st.session_state.get("lot_edit_inputs") or {}).items():
+            c1, c2, c3 = st.columns([1.5, 3, 1])
+            with c1: st.write(code_s)                 # _after_itemCode
+            with c2: st.write(info.get("name",""))    # _after_itemName
+            with c3:
+              key_txt = f"ymd_{code_s}"
+              default_val = info.get("ymd","")
+              st.text_input("YYMMDD", value=default_val, key=key_txt, label_visibility="collapsed")
+          apply_lot_btn = st.form_submit_button("적용")
+
+        # 적용 로직: 그룹별로 YYMMDD 반영, 뒤 3자리 100부터 순번
+        if apply_lot_btn:
+          df_apply = st.session_state["preview_df_full"].copy()
+
+          def _rebuild_lot(old_lot: str, code7: str, wc2: str, ymd: str, seq: int) -> str:
+            return f"{code7}-{wc2}-{ymd}{seq:03d}"
+
+          total_updates = 0
+          for code_s in (st.session_state.get("lot_edit_inputs") or {}):
+            ymd_in = str(st.session_state.get(f"ymd_{code_s}", "")).strip()
+            if not re.fullmatch(r"\d{6}", ymd_in):
+              continue  # YYMMDD 형식 아닐 때는 건너뜀
+
+            mask = df_apply["_after_itemCode"].astype(str) == code_s
+            idxs = list(df_apply[mask].index)
+
+            for i, idx in enumerate(idxs):
+              old = str(df_apply.at[idx, "_after_lotCode"] or "")
+              m = re.match(r"^([^-]{7})-([^-]{2})-\d{6}\d{3}$", old)
+              code7 = (m.group(1) if m else str(code_s)[:7]).ljust(7)[:7]
+              wc2   = (m.group(2) if m else "C1").ljust(2)[:2]
+              df_apply.at[idx, "_after_lotCode"] = _rebuild_lot(old, code7, wc2, ymd_in, 100 + i)
+              total_updates += 1
+
+          # ▼ 표 갱신 강제
+          st.session_state["preview_df_full"] = df_apply
+          # (표는 위에서 'src -> disp'로 그려졌기 때문에) 강제 재생성 트리거
+          st.session_state["grid_right_nonce"] = st.session_state.get("grid_right_nonce", 0) + 1
+          st.toast(f"LOT 변경 적용: {total_updates}건 · YYMMDD 반영 및 100부터 순번 부여", icon="✏️")
+          st.rerun()
+
       # =========================
       # 저장/불러오기 (변환 미리보기 전용) — 가로 정렬
       # =========================
       c_sv1, c_sv2, c_sv3 = st.columns([1, 3, 1])
+      
       with c_sv1:
         _save_payload = {
           "schema_version": 1,
@@ -1258,8 +1363,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
           created_ids: List[int] = []
           alias = st.session_state["alias_selected"] or {}
           account_alias_id = _to_int_safe(alias.get("accountAliasId"), 10038)
-          account_alias_code = str(alias.get("accountAliasName") or "품목코드 변환")
-          account_alias_name = str(alias.get("accountAliasName") or "품목코드 변환")
+          account_alias_code = str(alias.get("accountAliasCode") or "")          # <-- 코드
+          account_alias_name = str(alias.get("accountAliasName") or "품목코드 변환")  # <-- 이름
+
           company_id, plant_id, company_code, _ = _context_ids()
 
           for (item_id, item_code, wh_id, wh_code, wh_name, p_uom, s_uom), gdf in grouped:
