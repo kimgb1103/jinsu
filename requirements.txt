@@ -1,0 +1,6 @@
+streamlit==1.38.0
+pandas==2.2.2
+st-aggrid==0.3.4.post3
+requests==2.32.3
+pdf417gen==0.7.2
+Pillow==10.4.0
