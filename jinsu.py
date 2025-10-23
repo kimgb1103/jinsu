@@ -17,6 +17,8 @@ import re
 import base64
 import datetime as dt
 from typing import Any, Dict, Optional, List, Tuple, Set
+from zoneinfo import ZoneInfo  # ← KST 고정용 추가
+
 
 import requests
 import pandas as pd
@@ -167,6 +169,10 @@ def _http_post_json(sess: requests.Session, url: str, payload: Dict[str, Any], t
     return resp.json() if resp.content else {}
   except Exception:
     return {}
+
+# ---- 항상 KST(Asia/Seoul)로 timestamp 생성 ----
+def now_kst() -> dt.datetime:
+  return dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo("Asia/Seoul"))
 
 # =========================
 # 상태 초기화
@@ -1129,7 +1135,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
           name_s = str(g["_after_itemName"].iloc[0]) if "_after_itemName" in g.columns and not g.empty else ""
           # 그룹 내 가장 최근(문자 비교 max) YYMMDD 기본값 (컬럼 직접 접근)
           yy = [ _pick_ymd(x) for x in g["_after_lotCode"].astype(str).tolist() if x ]
-          default_ymd = max(yy) if yy else dt.datetime.now().strftime("%y%m%d")
+          default_ymd = max(yy) if yy else now_kst().strftime("%y%m%d")  # ← KST
           inputs[code_s] = {"name": name_s, "ymd": default_ymd}
         st.session_state["lot_edit_inputs"] = inputs
 
@@ -1193,7 +1199,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
       with c_sv1:
         _save_payload = {
           "schema_version": 1,
-          "saved_at": dt.datetime.now().isoformat(),
+          "saved_at": now_kst().isoformat(),  # ← KST
           "preview_df_full": st.session_state["preview_df_full"].to_dict(orient="records"),
           "wh_selected": st.session_state.get("wh_selected"),
           "alias_selected": st.session_state.get("alias_selected"),
@@ -1204,11 +1210,12 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
         st.download_button(
           "💾 저장(.json)",
           data=json.dumps(_save_payload, ensure_ascii=False, indent=2).encode("utf-8"),
-          file_name=f"preview_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+          file_name=f"preview_{now_kst().strftime('%Y%m%d_%H%M%S')}.json",  # ← KST
           mime="application/json",
           use_container_width=True,
           key="btn_preview_save",
         )
+
       with c_sv2:
         _uploaded = st.file_uploader("📂 불러오기(.json)", type=["json"], key="preview_import_file")
       with c_sv3:
@@ -1340,9 +1347,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             st.error("세션이 없습니다. 다시 로그인하세요.")
             st.stop()
 
-          _freeze = dt.datetime.now()
-          tx_dt  = _freeze.strftime("%Y-%m-%d %H:%M:%S")  # 버튼 시각(현지) - DATETIME
-          tx_ymd = _freeze.strftime("%Y-%m-%d")          # 버튼 시각(현지) - DATE
+          _freeze = now_kst()  # ← KST
+          tx_dt  = _freeze.strftime("%Y-%m-%d %H:%M:%S")  # 버튼 시각(KST)
+          tx_ymd = _freeze.strftime("%Y-%m-%d")           # 버튼 시각(KST)
           base_date_str = tx_ymd
 
           # 그룹 키 누락 보정
@@ -1670,7 +1677,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
         try:
           company_id, plant_id, company_code, user_id = _context_ids()
           sess: requests.Session = st.session_state["sess"]
-          base_now = dt.datetime.now()
+          base_now = now_kst()  # ← KST
           base_ymd = base_now.strftime("%Y-%m-%d")
           trans_dt = base_now.strftime("%Y-%m-%d %H:%M:%S")
 
