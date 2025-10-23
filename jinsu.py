@@ -1602,8 +1602,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error("기타입고 top-list 조회 실패"); st.stop()
             top_row = tl.iloc[0].to_dict()
             account_result_id = int(top_row["accountResultId"])
-            # ▼ 현재 시간으로 거래일자 강제 갱신(수정 저장)
-            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
+            # ▼ (순서 변경) 거래일자 갱신은 bottom-save 성공 후에 수행
 
             lot_rows = []
             for _, row in g.iterrows():
@@ -1620,6 +1619,12 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               ok2 = _receipt_bottom_save(lot_rows)
             if not ok2:
               st.error("기타입고 bottom-save 실패"); st.stop()
+
+            # ▼ bottom-save가 끝난 "지금" 거래일자를 현재 시간으로 갱신(수정 저장)
+            tl2 = _receipt_top_list(ymd=base_ymd)
+            tl2 = tl2[(tl2["accountNum"]==acct_num)]
+            if not tl2.empty:
+              _ = _receipt_top_update_transaction_date(tl2.iloc[0].to_dict(), trans_dt)
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
               ok_tx = _receipt_transmit(account_result_id)
