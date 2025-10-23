@@ -480,18 +480,28 @@ def _issue_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool
     return False
 
 def _receipt_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool:
-  """기타입고 top-list로 받은 row를 현재시간 new_dt로 갱신(수정 저장)"""
+  """기타입고 top-list row에서 필수키만 뽑아 거래일자만 U 저장(안전 갱신)"""
   try:
     sess: requests.Session = st.session_state["sess"]
     base_url = st.session_state["base_url"].rstrip("/")
     url = base_url + "/inv/stock-account-receipt/top-save"
-    upd = dict(row)
-    upd["editStatus"] = "U"
-    upd["transactionDate"] = new_dt
-    upd["row-active"] = True
+
+    safe = {
+      "editStatus": "U",
+      "row-active": True,
+      # 식별/컨텍스트 최소키
+      "companyId": row.get("companyId"),
+      "plantId": row.get("plantId"),
+      "accountResultId": row.get("accountResultId"),
+      "transactionTypeId": row.get("transactionTypeId"),
+      "transactionTypeCode": row.get("transactionTypeCode"),
+      # 실제로 바꿀 값
+      "transactionDate": new_dt,
+    }
+
     payload = {
       "recordsIMain": "[]",
-      "recordsUMain": json.dumps([upd], ensure_ascii=False),
+      "recordsUMain": json.dumps([safe], ensure_ascii=False),
       "recordsDMain": "[]",
       "menuTreeId": "13650",
       "languageCode": "KO",
@@ -534,12 +544,24 @@ def _receipt_top_list(ymd:str)->pd.DataFrame:
      "locationCode":"","locationName":"","interfaceFlag":"","start":1,"page":1,"limit":999})
   return pd.DataFrame((((data or {}).get("data") or {}).get("list")) or [])
 
-def _receipt_bottom_save(records:List[Dict[str,Any]])->bool:
-  sess=st.session_state["sess"]; base=st.session_state["base_url"].rstrip("/")
-  data=_http_post_json(sess, base+"/inv/stock-account-receipt/bottom-save",
-    {"recordsI":json.dumps(records, ensure_ascii=False),"recordsU":"[]","recordsD":"[]",
-     "menuTreeId":"13650","languageCode":"KO","companyCode":_context_ids()[2],"companyId":_context_ids()[0]}, timeout=90)
-  return bool((data or {}).get("success"))
+def _receipt_bottom_save(records: List[Dict[str, Any]]) -> Tuple[bool, str]:
+  sess = st.session_state["sess"]; base = st.session_state["base_url"].rstrip("/")
+  data = _http_post_json(
+    sess, base + "/inv/stock-account-receipt/bottom-save",
+    {
+      "recordsI": json.dumps(records, ensure_ascii=False),
+      "recordsU": "[]",
+      "recordsD": "[]",
+      "menuTreeId": "13650",
+      "languageCode": "KO",
+      "companyCode": _context_ids()[2],
+      "companyId": _context_ids()[0],
+    },
+    timeout=90,
+  )
+  ok = bool((data or {}).get("success"))
+  msg = (data or {}).get("msg") or ""
+  return ok, msg
 
 def _receipt_menugrid_data_cnt(account_result_id:int)->int:
   sess=st.session_state["sess"]; base=st.session_state["base_url"].rstrip("/")
@@ -1555,6 +1577,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
 
           alias = st.session_state["alias_selected"] or {}
           account_alias_id = _to_int_safe(alias.get("accountAliasId"), 10009)
+          account_alias_code = str(alias.get("accountAliasCode") or "")   # ← 추가
           account_alias_name = str(alias.get("accountAliasName") or "TEST")
 
           grp = after_df.groupby(["_after_itemCode","_after_itemName","_after_primaryUom"], dropna=False)
@@ -1578,7 +1601,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             header = [{
               "editStatus":"I","companyId":company_id,"plantId":plant_id,"accountNum":acct_num,
               "transactionTypeId":10080,"transactionTypeCode":"Account_Receipt","transactionTypeName":"기타입고",
-              "accountAliasId":account_alias_id,"accountAliasCode":account_alias_name,"accountAliasName":account_alias_name,
+              "accountAliasId":account_alias_id,"accountAliasCode":account_alias_code,"accountAliasName":account_alias_name,
               "warehouseId":wh_id,"warehouseCode":wh_code,"warehouseName":wh_name,
               "locationId":0,"locationCode":"","locationName":None,
               "transactionDate":trans_dt,"accountResultId":0,"lotCount":0,
@@ -1606,25 +1629,23 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
 
             lot_rows = []
             for _, row in g.iterrows():
+              _qty = float(pd.to_numeric(row["_after_onhandQuantity"], errors="coerce") or 0)
               lot_rows.append({
                 "editStatus":"I","companyId":company_id,"plantId":plant_id,"accountResultId":account_result_id,
-                "itemId":item_id,"primaryUom":primary_uom,"primaryQuantity":float(row["_after_onhandQuantity"]),
-                "lotQuantity":0,"secondaryUom":secondary_uom,"secondaryQuantity":float(row["_after_onhandQuantity"]),
-                "effectivePeriodOfDayFlag":"N","parentLotCount":0,"parentPrimaryQuantity":float(total_qty),
+                "warehouseId":wh_id,"warehouseCode":wh_code,"warehouseName":wh_name,
+                "itemId":item_id,"primaryUom":primary_uom,"primaryQuantity":_qty,
+                "lotQuantity":_qty,"secondaryUom":secondary_uom,"secondaryQuantity":_qty,
+                "effectiveStartDate":None,"effectiveEndDate":None,"effectivePeriodOfDayFlag":"N",  # ← 필수 필드 추가
+                "parentLotCount":int(len(g)),"parentPrimaryQuantity":float(total_qty),
                 "parentEffectiveStartDate":None,"parentEffectiveEndDate":None,"parentInterfaceFlag":"N",
                 "lotCode":str(row["_after_lotCode"]),"lotType":"양품","lotId":0,"interfaceFlag":"N",
                 "id":"ext-receipt-lot","row-active":True,"errorField":{}
               })
             with st.spinner(f"② LOT 저장(bottom-save) 중... [{aft_code}]"):
-              ok2 = _receipt_bottom_save(lot_rows)
+              ok2, err_msg = _receipt_bottom_save(lot_rows)
             if not ok2:
-              st.error("기타입고 bottom-save 실패"); st.stop()
-
-            # ▼ bottom-save가 끝난 "지금" 거래일자를 현재 시간으로 갱신(수정 저장)
-            tl2 = _receipt_top_list(ymd=base_ymd)
-            tl2 = tl2[(tl2["accountNum"]==acct_num)]
-            if not tl2.empty:
-              _ = _receipt_top_update_transaction_date(tl2.iloc[0].to_dict(), trans_dt)
+              st.error(f"기타입고 bottom-save 실패: {err_msg or '서버 사유 미반환'}")
+              st.stop()
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
               ok_tx = _receipt_transmit(account_result_id)
