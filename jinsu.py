@@ -480,28 +480,20 @@ def _issue_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool
     return False
 
 def _receipt_top_update_transaction_date(row: Dict[str, Any], new_dt: str) -> bool:
-  """기타입고 top-list row에서 필수키만 뽑아 거래일자만 U 저장(안전 갱신)"""
+  """기타입고 top-list로 받은 row를 현재시간으로 갱신(전체 행 U 저장)"""
   try:
     sess: requests.Session = st.session_state["sess"]
     base_url = st.session_state["base_url"].rstrip("/")
     url = base_url + "/inv/stock-account-receipt/top-save"
 
-    safe = {
-      "editStatus": "U",
-      "row-active": True,
-      # 식별/컨텍스트 최소키
-      "companyId": row.get("companyId"),
-      "plantId": row.get("plantId"),
-      "accountResultId": row.get("accountResultId"),
-      "transactionTypeId": row.get("transactionTypeId"),
-      "transactionTypeCode": row.get("transactionTypeCode"),
-      # 실제로 바꿀 값
-      "transactionDate": new_dt,
-    }
+    upd = dict(row)                 # ← 전체 row 복사
+    upd["editStatus"] = "U"
+    upd["transactionDate"] = new_dt # ← 거래일자만 치환
+    upd["row-active"] = True
 
     payload = {
       "recordsIMain": "[]",
-      "recordsUMain": json.dumps([safe], ensure_ascii=False),
+      "recordsUMain": json.dumps([upd], ensure_ascii=False),
       "recordsDMain": "[]",
       "menuTreeId": "13650",
       "languageCode": "KO",
@@ -594,8 +586,8 @@ def _receipt_top_transmit_proc(top_row:Dict[str,Any])->bool:
   data=_http_post_json(sess, base+"/inv/stock-account-receipt/top-transmit-proc", payload, timeout=90)
   return bool((data or {}).get("success"))
 
-def _receipt_transmit(account_result_id:int)->bool:
-  ymd = dt.datetime.now().strftime("%Y-%m-%d")
+def _receipt_transmit(account_result_id:int, ymd:str)->bool:
+  # ymd는 직전에 갱신/사용한 거래일자(YYYY-MM-DD)와 동일해야 함
   tl = _receipt_top_list(ymd)
   row_df = tl[tl["accountResultId"]==int(account_result_id)]
   if row_df.empty:
@@ -609,7 +601,6 @@ def _receipt_transmit(account_result_id:int)->bool:
     return False
   ok_top = _receipt_top_transmit_proc(row)
   return ok_top
-
 # =========================
 # 본문
 # =========================
@@ -1350,9 +1341,8 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             st.stop()
 
           _freeze = dt.datetime.now()
-          _tx_now = _freeze + dt.timedelta(hours=9)  # 서버(UTC) 보정
-          tx_dt  = _tx_now.strftime("%Y-%m-%d %H:%M:%S")  # 버튼 시각(보정) - DATETIME
-          tx_ymd = _tx_now.strftime("%Y-%m-%d")          # 버튼 시각(보정) - DATE
+          tx_dt  = _freeze.strftime("%Y-%m-%d %H:%M:%S")  # 버튼 시각(현지) - DATETIME
+          tx_ymd = _freeze.strftime("%Y-%m-%d")          # 버튼 시각(현지) - DATE
           base_date_str = tx_ymd
 
           # 그룹 키 누락 보정
@@ -1679,7 +1669,6 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
           base_now = dt.datetime.now()
           base_ymd = base_now.strftime("%Y-%m-%d")
           trans_dt = base_now.strftime("%Y-%m-%d %H:%M:%S")
-          tx_dt   = (base_now + dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")  # 서버표시 보정(+9h)
 
           after_wh = st.session_state["wh_selected"] or {}
           wh_id = _to_int_safe(after_wh.get("warehouseId"), 0)
@@ -1758,11 +1747,11 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error(f"기타입고 bottom-save 실패: {err_msg or '서버 사유 미반환'}")
               st.stop()
               
-             # ▼ 거래일자 현재시간(+9h 보정)으로 갱신(최소 변경 1줄)
-            _ = _receipt_top_update_transaction_date(top_row, tx_dt)
+            # ▼ 거래일자 현재시간(현지)으로 갱신(최소 변경 1줄)
+            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
-              ok_tx = _receipt_transmit(account_result_id)
+              ok_tx = _receipt_transmit(account_result_id, base_ymd)  # ← 방금 쓴 거래일자 날짜(YYYY-MM-DD)로 고정
             if not ok_tx:
               st.error("전송 실패(top/bottom transmit)"); st.stop()
 
