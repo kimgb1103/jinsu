@@ -1349,14 +1349,18 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             st.error("세션이 없습니다. 다시 로그인하세요.")
             st.stop()
 
-          now = dt.datetime.now()
-          base_date_str = now.strftime("%Y-%m-%d")
+          _freeze = dt.datetime.now()
+          _tx_now = _freeze + dt.timedelta(hours=9)  # 서버(UTC) 보정
+          tx_dt  = _tx_now.strftime("%Y-%m-%d %H:%M:%S")  # 버튼 시각(보정) - DATETIME
+          tx_ymd = _tx_now.strftime("%Y-%m-%d")          # 버튼 시각(보정) - DATE
+          base_date_str = tx_ymd
 
           # 그룹 키 누락 보정
           grp_cols = ["itemId","itemCode","warehouseId","warehouseCode","warehouseName","primaryUom","secondaryUom"]
           for col in grp_cols:
             if col not in src_full.columns:
               src_full[col] = None
+
           grouped = src_full.groupby(grp_cols, dropna=False)
 
           all_results = []
@@ -1383,7 +1387,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               "accountAliasId": account_alias_id,"accountAliasCode": account_alias_code,"accountAliasName": account_alias_name,
               "warehouseId": _to_int_safe(wh_id, 0),"warehouseCode": str(wh_code or ""), "warehouseName": str(wh_name or ""),
               "locationId": 0,"locationCode": None,"locationName": None,
-              "transactionDate": now.strftime("%Y-%m-%d %H:%M:%S"),
+              "transactionDate": tx_dt,
               "accountResultId": 0,"lotCount": lot_count,
               "primaryQuantity": qty_abs_sum,"secondaryQuantity": sec_abs_sum,
               "projectId": 0,"effectiveStartDate": None,"effectiveEndDate": None,
@@ -1419,12 +1423,12 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.error("lot-save 실패"); st.stop()
 
             with st.spinner(f"④ 저장내용 검증(top-list) 중... [{item_code}/{wh_name}]"):
-              confirm = _top_list_confirm_issue(account_num, str(item_code or ""), now.strftime("%Y-%m-%d"))
+              confirm = _top_list_confirm_issue(account_num, str(item_code or ""), tx_ymd)
             lst = (((confirm or {}).get("data") or {}).get("list")) or []
             if lst:
               row = dict(lst[0])
-              # ▼ 현재 시간으로 거래일자 강제 갱신(수정 저장)
-              _ = _issue_top_update_transaction_date(row, now.strftime("%Y-%m-%d %H:%M:%S"))
+              # ▼ 버튼 시각(보정)으로 거래일자 강제 갱신(수정 저장)
+              _ = _issue_top_update_transaction_date(row, tx_dt)
               all_results.append({
                 "accountNum": row.get("accountNum"),
                 "itemCode": row.get("itemCode"),
@@ -1752,6 +1756,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
             if not ok2:
               st.error(f"기타입고 bottom-save 실패: {err_msg or '서버 사유 미반환'}")
               st.stop()
+              
+             # ▼ 거래일자 현재시간으로 갱신(최소 변경 1줄)
+            _ = _receipt_top_update_transaction_date(top_row, trans_dt)
 
             with st.spinner("③ 전송 처리 중...(menugrid → bottom-transmit → top-transmit)"):
               ok_tx = _receipt_transmit(account_result_id)
