@@ -2,7 +2,8 @@ streamlit==1.38.0
 pandas==2.2.2
 streamlit-aggrid==1.1.6
 requests==2.32.3
-pdf417gen==0.7.2
+pdf417gen==0.7.1
 Pillow==10.4.0
 rich==13.9.4
+
 
