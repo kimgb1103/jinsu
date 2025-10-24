@@ -1118,7 +1118,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
       )
 
       # ========= LOT 변경 버튼 =========
-      btn_lot_change = st.button("LOT 변경", key="btn_lot_change")  # ← 너비/높이는 네가 조정
+      btn_lot_change = st.button("LOT 변경", key="btn_lot_change")  # ← 너비/높이는 너가 조정
 
       # 버튼 클릭 시 편집용 기본값 구성 (_after_itemCode 그룹당 1개)
       if btn_lot_change:
@@ -1144,14 +1144,20 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
         st.markdown("##### LOT 변경")
         with st.form("lot_change_form", clear_on_submit=False):
           # 헤더
-          h1, h2, h3 = st.columns([1.5, 3, 1])
+          h0, h1, h2, h3 = st.columns([0.7, 1.5, 3, 1])  # 선택 체크박스 열 추가 # ★
+          with h0: st.markdown("**선택**")               # ★
           with h1: st.markdown("**_after_itemCode**")
           with h2: st.markdown("**_after_itemName**")   # 오타 수정
           with h3: st.markdown("**YYMMDD**")
 
           # 코드 · 이름 · YYMMDD 입력 (그룹당 1줄)
           for code_s, info in (st.session_state.get("lot_edit_inputs") or {}).items():
-            c1, c2, c3 = st.columns([1.5, 3, 1])
+            c0, c1, c2, c3 = st.columns([0.7, 1.5, 3, 1])  # 체크박스 열 포함 4열 구성 # ★
+            with c0:
+              st.checkbox(                                       # ★
+                label="", key=f"chk_{code_s}", value=False,      # ★
+                label_visibility="collapsed"                      # ★
+              )                                                   # ★
             with c1: st.write(code_s)                 # _after_itemCode
             with c2: st.write(info.get("name",""))    # _after_itemName
             with c3:
@@ -1160,7 +1166,7 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
               st.text_input("YYMMDD", value=default_val, key=key_txt, label_visibility="collapsed")
           apply_lot_btn = st.form_submit_button("적용")
 
-        # 적용 로직: 그룹별로 YYMMDD 반영, 뒤 3자리 100부터 순번
+        # 적용 로직: 그룹별로 YYMMDD 반영(체크된 항목만), 뒤 3자리 100부터 순번
         if apply_lot_btn:
           df_apply = st.session_state["preview_df_full"].copy()
 
@@ -1169,6 +1175,9 @@ if st.session_state["is_authed"] and st.session_state["show_lot_view"]:
 
           total_updates = 0
           for code_s in (st.session_state.get("lot_edit_inputs") or {}):
+            # 체크된 항목만 진행
+            if not bool(st.session_state.get(f"chk_{code_s}", False)):   # ★
+              continue                                                   # ★
             ymd_in = str(st.session_state.get(f"ymd_{code_s}", "")).strip()
             if not re.fullmatch(r"\d{6}", ymd_in):
               continue  # YYMMDD 형식 아닐 때는 건너뜀
